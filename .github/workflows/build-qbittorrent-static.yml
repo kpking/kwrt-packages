@@ -1,0 +1,69 @@
+name: Build qBittorrent-static IPK (mipsel_24kc)
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture"
+        required: true
+        default: "mipsel_24kc"
+      version:
+        description: "qBittorrent-static version (对应 Makefile 里的 PKG_VERSION)"
+        required: true
+        default: "4.5.2_v2.0.8"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential wget curl fakeroot tar
+
+    - name: Prepare build directory
+      run: |
+        mkdir -p build/qbittorrent-static/{CONTROL,usr/bin}
+        ARCH="${{ github.event.inputs.arch }}"
+        VERSION="${{ github.event.inputs.version }}"
+        echo "ARCH=$ARCH"
+        echo "VERSION=$VERSION"
+
+        # 生成 CONTROL 文件
+        cat > build/qbittorrent-static/CONTROL/control <<EOF
+        Package: qbittorrent-static
+        Version: ${VERSION}
+        Architecture: ${ARCH}
+        Maintainer: GitHub Actions <noreply@github.com>
+        Section: net
+        Priority: optional
+        Depends:
+        Description: qBittorrent-nox (static build)
+         Static qBittorrent-nox binary packaged for OpenWrt.
+        EOF
+
+    - name: Download prebuilt qbittorrent-nox
+      run: |
+        ARCH="${{ github.event.inputs.arch }}"
+        VERSION="${{ github.event.inputs.version }}"
+        URL="https://github.com/userdocs/qbittorrent-nox-static/releases/download/release-${VERSION}/${ARCH}-qbittorrent-nox"
+        echo "Downloading: $URL"
+        wget -O build/qbittorrent-static/usr/bin/qbittorrent-nox "$URL"
+        chmod +x build/qbittorrent-static/usr/bin/qbittorrent-nox
+
+    - name: Build IPK
+      run: |
+        cd build
+        fakeroot tar --numeric-owner -czf \
+          qbittorrent-static_${{ github.event.inputs.version }}_${{ github.event.inputs.arch }}.ipk \
+          ./qbittorrent-static
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: qbittorrent-static-${{ github.event.inputs.arch }}
+        path: build/*.ipk
