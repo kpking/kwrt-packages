@@ -10,7 +10,7 @@ on:
       sdk_version:
         description: "OpenWrt SDK version"
         required: true
-        default: "24.10-SNAPSHOT"
+        default: "24.10.3"
       packages:
         description: "Packages to build (comma separated, default: qBittorrent-static)"
         required: true
@@ -28,23 +28,35 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential git wget curl unzip \
-          libncurses5-dev gawk gettext libssl-dev python3 python3-distutils file
+          libncurses5-dev gawk gettext libssl-dev python3 python3-distutils file \
+          zstd
 
     - name: Download OpenWrt SDK
       run: |
         TARGET="${{ github.event.inputs.target }}"
         SDK_VER="${{ github.event.inputs.sdk_version }}"
         BASE_URL="https://downloads.openwrt.org/releases/${SDK_VER}/targets/${TARGET}"
-        SDK_FILE=$(curl -s $BASE_URL/ | grep -o 'openwrt-sdk[^"]*tar.xz' | head -n1)
+        SDK_FILE=$(curl -s $BASE_URL/ | grep -o 'openwrt-sdk[^"]*\.tar.[xzst]*' | head -n1)
 
         if [ -z "$SDK_FILE" ]; then
           echo "❌ SDK not found for $TARGET $SDK_VER"
           exit 1
         fi
 
-        wget -q $BASE_URL/$SDK_FILE -O sdk.tar.xz
-        tar -xJf sdk.tar.xz
-        SDK_DIR=$(tar -tf sdk.tar.xz | head -1 | cut -f1 -d"/")
+        echo "✅ Found SDK: $SDK_FILE"
+        wget -q $BASE_URL/$SDK_FILE -O sdk.tar
+
+        # 根据后缀解压
+        if [[ $SDK_FILE == *.tar.xz ]]; then
+          tar -xJf sdk.tar
+        elif [[ $SDK_FILE == *.tar.zst ]]; then
+          tar --use-compress-program=unzstd -xf sdk.tar
+        else
+          echo "❌ Unknown SDK format: $SDK_FILE"
+          exit 1
+        fi
+
+        SDK_DIR=$(tar -tf sdk.tar | head -1 | cut -f1 -d"/")
         mv "$SDK_DIR" sdk
 
     - name: Add custom feed (kwrt-packages)
