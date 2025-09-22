@@ -1,0 +1,77 @@
+name: Build OpenWrt IPKs
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "OpenWrt Target (e.g. ramips/mt7621)"
+        required: true
+        default: "ramips/mt7621"
+      sdk_version:
+        description: "OpenWrt SDK version"
+        required: true
+        default: "24.10-SNAPSHOT"
+      packages:
+        description: "Packages to build (comma separated, default: qBittorrent-static)"
+        required: true
+        default: "qBittorrent-static"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git wget curl unzip \
+          libncurses5-dev gawk gettext libssl-dev python3 python3-distutils file
+
+    - name: Download OpenWrt SDK
+      run: |
+        TARGET="${{ github.event.inputs.target }}"
+        SDK_VER="${{ github.event.inputs.sdk_version }}"
+        BASE_URL="https://downloads.openwrt.org/releases/${SDK_VER}/targets/${TARGET}"
+        SDK_FILE=$(curl -s $BASE_URL/ | grep -o 'openwrt-sdk[^"]*tar.xz' | head -n1)
+
+        if [ -z "$SDK_FILE" ]; then
+          echo "❌ SDK not found for $TARGET $SDK_VER"
+          exit 1
+        fi
+
+        wget -q $BASE_URL/$SDK_FILE -O sdk.tar.xz
+        tar -xJf sdk.tar.xz
+        SDK_DIR=$(tar -tf sdk.tar.xz | head -1 | cut -f1 -d"/")
+        mv "$SDK_DIR" sdk
+
+    - name: Add custom feed (kwrt-packages)
+      run: |
+        cd sdk
+        echo "src-link custom $(pwd)/.." >> feeds.conf.default
+        ./scripts/feeds update custom
+        ./scripts/feeds install -a -p custom
+
+    - name: Configure
+      run: |
+        cd sdk
+        make defconfig
+        for pkg in $(echo "${{ github.event.inputs.packages }}" | tr ',' ' '); do
+          echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+        done
+        make defconfig
+
+    - name: Build packages
+      run: |
+        cd sdk
+        for pkg in $(echo "${{ github.event.inputs.packages }}" | tr ',' ' '); do
+          make package/$pkg/compile -j$(nproc) V=sc || exit 1
+        done
+
+    - name: Upload IPK artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-ipks
+        path: sdk/bin/packages/**/*.ipk
